@@ -1,6 +1,6 @@
 
 
-task lowercase2015 {
+task lowercase2015 << {
 	doLast {
 		String iswc2015ttl = new File('src/iswc2015_metadata_preview.ttl').text
 		iswc2015ttl = iswc2015ttl.replaceAll(/(<http:\/\/data\.semanticweb\.org\/organization\/)(.*)>/) { it[1] + it[2].toLowerCase() + '>'} 
@@ -9,23 +9,33 @@ task lowercase2015 {
 	}
 }
 
-task toTtl {
+task toTtl << {
 	def tree = fileTree('src').include('*.rdf')
 	tree.each {File file ->
     	def name = file.name.lastIndexOf('.').with {it != -1 ? file.name[0..<it] : file.name}
-    	println "riot --pretty=ttl ${file} > target/${name}.ttl"
     	def ttlFile = new File("target/${name}.ttl")
     	ttlFile.createNewFile()
-    	def proc = "riot --pretty=ttl ${file}".execute()
+    	def cmd = "riot --pretty=ttl ${file}"
+    	def proc = cmd.execute()
     	proc.in.eachLine {line -> ttlFile.append(line)}
 		proc.err.eachLine {line -> println 'ERROR: ' + line}
 		proc.waitFor() 
 	}
 }
 
-task upload {
-	def tree = fileTree('target').include('*.ttl')
-	tree.each {
+task clearBigdata {
+	
+}
 
+task upload << {
+	def tree = fileTree('target').include('*.ttl')
+	tree.each {File file ->
+		def name = file.name.lastIndexOf('.').with {it != -1 ? file.name[0..<it] : file.name}
+		def cmd = "curl -D- -H 'Content-Type: text/turtle' --upload-file ${file} -X POST 'http://iswc2015.apps.vismart.biz/bigdata/sparql?context-uri=http://${name}'"
+		println cmd
+		//def proc = cmd.execute()
+		//proc.in.eachLine {line -> println line}
+		//proc.err.eachLine {line -> println 'ERROR: ' + line}
+		//proc.waitFor() 
 	}
 }
