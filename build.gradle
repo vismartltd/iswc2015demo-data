@@ -1,16 +1,26 @@
-
+buildscript {
+	repositories {
+        mavenLocal()
+				mavenCentral()
+    }
+    dependencies {
+        classpath 'org.codehaus.groovy.modules.http-builder:http-builder:0.7.1'
+				classpath 'oauth.signpost:signpost-core:1.2.1.2'
+				classpath 'oauth.signpost:signpost-commonshttp4:1.2.1.2'
+    }
+}
 
 task lowercase2015 << {
 	doLast {
 		String iswc2015ttl = new File('src/iswc2015_metadata_preview.ttl').text
-		iswc2015ttl = iswc2015ttl.replaceAll(/(<http:\/\/data\.semanticweb\.org\/organization\/)(.*)>/) { it[1] + it[2].toLowerCase() + '>'} 
-        iswc2015ttl = iswc2015ttl.replaceAll(/(<http:\/\/data\.semanticweb\.org\/person\/)(.*)>/) { it[1] + it[2].toLowerCase() + '>'}        
+		iswc2015ttl = iswc2015ttl.replaceAll(/(<http:\/\/data\.semanticweb\.org\/organization\/)(.*)>/) { it[1] + it[2].toLowerCase() + '>'}
+        iswc2015ttl = iswc2015ttl.replaceAll(/(<http:\/\/data\.semanticweb\.org\/person\/)(.*)>/) { it[1] + it[2].toLowerCase() + '>'}
 		new File('target/iswc-2015_metadata_preview.processed.ttl').text = iswc2015ttl
 	}
 }
 
 task toTtl << {
-	def tree = fileTree('src').include('*.rdf')
+	def tree = fileTree('src').i tnclude('*.rdf')
 	tree.each {File file ->
     	def name = file.name.lastIndexOf('.').with {it != -1 ? file.name[0..<it] : file.name}
     	def ttlFile = new File("target/${name}.ttl")
@@ -19,12 +29,8 @@ task toTtl << {
     	def proc = cmd.execute()
     	proc.in.eachLine {line -> ttlFile.append(line)}
 		proc.err.eachLine {line -> println 'ERROR: ' + line}
-		proc.waitFor() 
+		proc.waitFor()
 	}
-}
-
-task clearBigdata {
-	
 }
 
 task upload << {
@@ -33,9 +39,58 @@ task upload << {
 		def name = file.name.lastIndexOf('.').with {it != -1 ? file.name[0..<it] : file.name}
 		def cmd = "curl -D- -H 'Content-Type: text/turtle' --upload-file ${file} -X POST 'http://iswc2015.apps.vismart.biz/bigdata/sparql?context-uri=http://${name}'"
 		println cmd
+		//somehow invoking curl here doesn't do the trick
 		//def proc = cmd.execute()
 		//proc.in.eachLine {line -> println line}
 		//proc.err.eachLine {line -> println 'ERROR: ' + line}
-		//proc.waitFor() 
+		//proc.waitFor()
 	}
+}
+
+task unionSplitFollowers << {
+	def tree = fileTree('src').include('iswc*followers.json');
+	def jsonSlurper = new groovy.json.JsonSlurper()
+	def ids = []
+	tree.each {File file ->
+		def parsed = jsonSlurper.parseText(file.text)
+		ids = ids + parsed.ids
+	}
+	ids = ids.unique()
+	def split = ids.collate(100)
+	split.eachWithIndex {batch, index ->
+		def file = new File("target/followers.${index}.txt")
+		file.text = batch
+	}
+}
+
+task queryProfileData << {
+	def tree = fileTree('target').include('followers.*.txt')
+	def twitter = twitterClient()
+	tree.eachWithIndex{ File file, index ->
+		def userIdsFile = file.text
+		def userIdsString = userIdsFile.replaceAll("\\[","").replaceAll("\\]", "").replaceAll(" ", "")
+		def resp = twitter.get( path : 'users/lookup.json', query: [user_id:userIdsString] )
+		def resultFile = new File("target/profiles.${index}.json")
+		resultFile.createNewFile()
+		resultFile.text = groovy.json.JsonOutput.toJson(resp.data)
+	}
+}
+
+task gatherProfiles << {
+	def profilesList = fileTree('target').include('profiles.*.json')
+	def jsonSlurper = new groovy.json.JsonSlurper()
+	def profiles = []
+	profilesList.each {File file->
+		def parsed = jsonSlurper.parseText(file.text)
+		profiles = profiles + parsed
+	}
+	def allProfiles = new File('target/profiles.json')
+	allProfiles.createNewFile()
+	allProfiles.text = groovy.json.JsonOutput.toJson(profiles)
+}
+
+def twitterClient() {
+	def twitter = new groovyx.net.http.RESTClient( 'https://api.twitter.com/1.1/' )
+	twitter.auth.oauth iswcTwitterConsumerKey, iswcTwitterConsumerSecret, iswcTwitterAccessToken, iswcTwitterAccessTokenSecret
+	return twitter
 }
