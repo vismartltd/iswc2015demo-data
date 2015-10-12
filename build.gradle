@@ -1,3 +1,6 @@
+import com.hp.hpl.jena.rdf.model.ModelFactory
+import com.hp.hpl.jena.util.FileManager
+import com.hp.hpl.jena.ontology.OntModelSpec
 buildscript {
 	repositories {
         mavenLocal()
@@ -7,6 +10,8 @@ buildscript {
         classpath 'org.codehaus.groovy.modules.http-builder:http-builder:0.7.1'
 				classpath 'oauth.signpost:signpost-core:1.2.1.2'
 				classpath 'oauth.signpost:signpost-commonshttp4:1.2.1.2'
+				classpath 'org.apache.jena:jena:2.11.2'
+				classpath 'org.apache.jena:jena-arq:2.11.2'
     }
 }
 
@@ -74,6 +79,59 @@ task queryProfileData << {
 		resultFile.createNewFile()
 		resultFile.text = groovy.json.JsonOutput.toJson(resp.data)
 	}
+}
+
+task queryFriends << {
+	def tree = fileTree('target').include('followers.*.txt')
+
+	def twitter = twitterClient()
+  tree.eachWithIndex { def idsFile, index ->
+		def userIdsFile = idsFile.text
+		def userIdsString = userIdsFile.replaceAll("\\[","").replaceAll("\\]", "").replaceAll(" ", "")
+		def userIds = userIdsString.tokenize(",")
+		def followersFile = new File("target/followers.${index}.json")
+		if (!followersFile.exists()) {
+			def friends = []
+			userIds.eachWithIndex{def id, index2 ->
+				def resp = twitter.get( path : 'friends/ids.json', query: [user_id:id] )
+				def friendsEntry = [id: id, friends: resp.data.ids]
+				friends.add(friendsEntry)
+				println "${idsFile.name}:${index2}: ${id}"
+				Thread.sleep(65000)
+			}
+			followersFile.createNewFile()
+			followersFile.text = groovy.json.JsonOutput.toJson(friends);
+		}
+	}
+}
+
+task profilesToRdf << {
+	def model = ModelFactory.createOntologyModel(OntModelSpec.OWL_MEM)
+	def dm =  model.getDocumentManager();
+	FileManager.setStdLocators(dm.getFileManager());
+	dm.loadImport(model, "http://rdfs.org/sioc/ns")
+	def siocPrefix = "http://rdfs.org/sioc/ns#"
+
+	def userAccountClass = model.getOntClass(siocPrefix + "UserAccount")
+	def userIdProp = model.getDatatypeProperty(siocPrefix + "id")
+	def avatarProp = model.getObjectProperty(siocPrefix + "avatar")
+	def followsProp = model.getObjectProperty(siocPrefix + "follows")
+	def nameProp = model.getDatatypeProperty(siocPrefix + "name")
+  	def noteProperty = model.getDatatypeProperty(siocPrefix + "note")
+
+	def jsonSlurper = new groovy.json.JsonSlurper()
+	def profiles = jsonSlurper.parseText(new File("target/profiles.json").text)
+	profiles.each {profile->
+			def userAccount = model.createIndividual("http://iswc2015.apps.vismart.biz/profiles/" + profile.id, userAccountClass);
+			userAccount.addLiteral(userIdProp, profile.id);
+			userAccount.addProperty(avatarProp, profile.profile_image_url)
+			userAccount.addLiteral(nameProp, profile.name);
+			userAccount.addLiteral(noteProperty, profile.description);
+	}
+
+	FileWriter fileWriter = new FileWriter("target/profiles.ttl");
+  model.write(fileWriter, "Turtle");
+  fileWriter.close();
 }
 
 task gatherProfiles << {
